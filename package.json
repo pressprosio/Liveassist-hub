@@ -1,0 +1,42 @@
+{
+  "name": "liveassist-hub",
+  "version": "0.1.0",
+  "description": "Self-hosted chat hub for LiveAssist AI Chat: live conversations, Claude answers, agent handoff and push.",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/server.js",
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "cli": "node dist/cli.js",
+    "site:create": "node dist/cli.js site:create",
+    "site:list": "node dist/cli.js site:list",
+    "site:rotate-secret": "node dist/cli.js site:rotate-secret",
+    "site:disable": "node dist/cli.js site:disable",
+    "site:enable": "node dist/cli.js site:enable",
+    "agent:create": "node dist/cli.js agent:create",
+    "agent:list": "node dist/cli.js agent:list",
+    "agent:reset-password": "node dist/cli.js agent:reset-password",
+    "agent:remove": "node dist/cli.js agent:remove"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@fastify/static": "^10.1.4",
+    "@fastify/websocket": "^11.3.1",
+    "fastify": "^5.12.5",
+    "firebase-admin": "^14.5.0",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
+}
