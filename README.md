@@ -102,7 +102,9 @@ Copy the Hub URL, Site ID and Site secret it prints. The secret is shown only on
 docker compose exec hub npm run agent:create -- --email you@presspros.io --name "Stacy" --admin
 ```
 
-It prints a generated password. Sign in at **https://chat.presspros.io/console/** to answer chats from your computer, and click **Turn on alerts** to get a browser notification when a visitor asks for a person. The mobile app will use the same login.
+It prints a **temporary password**. Sign in at **https://chat.presspros.io/console/** or in the LiveAssist phone app, and you'll be asked to choose your own password. In the console, click **Turn on alerts** to get a browser notification when a visitor asks for a person.
+
+Anyone can change their password later: use **Change password** in the console's top bar, or **Settings → Change password** in the app. It signs out their other devices.
 
 ---
 
@@ -123,7 +125,7 @@ Run these from the `liveassist-hub` folder on the server.
 | New secret for a site | `docker compose exec hub npm run site:rotate-secret -- --id presspros` |
 | Pause chat on a site | `docker compose exec hub npm run site:disable -- --id presspros` |
 | Add a team member | `docker compose exec hub npm run agent:create -- --email sam@presspros.io --name "Sam"` |
-| Reset a password | `docker compose exec hub npm run agent:reset-password -- --email sam@presspros.io` |
+| Reset a forgotten password (issues a temporary one) | `docker compose exec hub npm run agent:reset-password -- --email sam@presspros.io` |
 | Remove a team member | `docker compose exec hub npm run agent:remove -- --email sam@presspros.io` |
 
 Each extra WordPress site gets its own `site:create`, and all sites share this one hub.
@@ -152,6 +154,7 @@ For a clean restore, first recreate the database: `docker compose exec db dropdb
 | Test connection: "Signature check failed" | Re-paste the Site secret, or run `site:rotate-secret` and paste the new one. If it still fails, the WordPress server's clock may be wrong. |
 | Chat shows "Leave a message" instead of chatting | The hub is unreachable from the browser, or `--url` doesn't match the site's address. `docker compose logs hub \| grep origin` shows rejected origins. |
 | Leads don't reach WordPress | A security plugin or firewall is blocking `/wp-json/laic/v1/webhook`. Allow the server's static IP. Failed deliveries retry for 24 hours. |
+| Log says the API key "is not scoped to a workspace" | Create the key inside a workspace in the Anthropic Console, or set `ANTHROPIC_WORKSPACE_ID` in `.env`, then `docker compose up -d`. |
 | The assistant says it's "having trouble" | Check `docker compose logs hub` for Claude API errors: a missing or invalid key, or the spend limit was reached. |
 
 ## Costs and limits
@@ -167,18 +170,20 @@ The system prompt is marked for prompt caching, so repeated questions on the sam
 
 ## Push notifications (for the mobile app)
 
-The hub already sends push notifications through Firebase Cloud Messaging (Android, and iOS via APNs). They switch on once the app exists:
+The LiveAssist app registers each phone with the hub. The hub sends notifications through **Expo's push service**, which delivers them through Apple and Google. **Nothing needs configuring on this server.** The Apple and Firebase setup lives in the app project (see its README).
 
-1. Create a Firebase project, add the Android and iOS apps, and upload your APNs key in Firebase.
-2. Download a service-account JSON (Project settings → Service accounts) and save it on the server as `secrets/firebase.json`.
-3. Set `FIREBASE_SERVICE_ACCOUNT=/app/secrets/firebase.json` in `.env` and run `docker compose up -d`.
+The hub sends a notification to every signed-in phone when a visitor asks for a person, and to the assigned team member when a visitor replies while they're away from the app. Phones that uninstall the app are removed automatically.
+
+Optional settings:
+- `EXPO_ACCESS_TOKEN` in `.env`: only if you turn on "enhanced push security" for the project on expo.dev.
+- `FIREBASE_SERVICE_ACCOUNT`: only for apps that register raw Firebase tokens instead of Expo tokens. The LiveAssist app doesn't need it.
 
 ## Security notes
 
 - Visitors never see your Claude key. Only the hub calls Claude.
 - WordPress and the hub sign every request with the site secret (HMAC-SHA256, 5-minute window). Site secrets are encrypted in the database with `HUB_ENCRYPTION_KEY`.
 - Visitor tokens expire after 2 hours and only work from the site's own address.
-- Team passwords are hashed with scrypt. Sign-in is rate-limited, and resetting a password signs that person out everywhere.
+- Team passwords are hashed with scrypt. Sign-in and password changes are rate-limited. New and reset accounts get a temporary password that must be replaced at first sign-in, and every password change signs that person out of their other devices.
 - Postgres and Redis are only reachable inside Docker, never from the internet.
 
 ## Local development
