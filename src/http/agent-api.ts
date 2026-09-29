@@ -1,9 +1,9 @@
 /** REST API for agents (mobile app and console): sign-in, devices, conversation history. */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { authenticate, login, publicAgent, registerDevice, removeDevice, type Agent } from '../agents.js';
+import { authenticate, changePassword, cleanNotify, deviceTokens, login, publicAgent, registerDevice, removeDevice, setNotify, type Agent } from '../agents.js';
 import { getConversation, listMessages, summaries, summary, toWire } from '../conversations.js';
 import { overLimit } from '../redis.js';
-import { pushEnabled } from '../push.js';
+import { pushEnabled, sendPush } from '../push.js';
 
 declare module 'fastify' {
   interface FastifyRequest { agent?: Agent }
@@ -33,6 +33,16 @@ export async function agentApi(app: FastifyInstance) {
 
     r.get('/agent/me', async (req) => ({ agent: publicAgent(req.agent!), push: pushEnabled() }));
 
+    r.post('/agent/password', async (req, reply) => {
+      if (await overLimit(`laic:rl:pw:${req.agent!.id}`, 5, 15 * 60)) {
+        return reply.code(429).send({ error: 'Too many attempts. Wait 15 minutes and try again.' });
+      }
+      const b = (req.body || {}) as { current_password?: string; new_password?: string };
+      const res = await changePassword(req.agent!.id, String(b.current_password || ''), String(b.new_password || ''));
+      if ('error' in res) return reply.code(400).send({ error: res.error });
+      return { token: res.token, agent: publicAgent(res.agent) };
+    });
+
     r.get('/agent/conversations', async (req) => {
       const q = req.query as { closed?: string };
       return { conversations: await summaries({ includeClosed: q.closed === '1' }) };
@@ -50,6 +60,17 @@ export async function agentApi(app: FastifyInstance) {
       if (!b.token) return reply.code(400).send({ error: 'Missing device token.' });
       await registerDevice(req.agent!.id, b.token, String(b.platform || 'unknown'));
       return { ok: true };
+    });
+
+    r.put('/agent/notifications', async (req) => {
+      const updated = await setNotify(req.agent!.id, cleanNotify(req.body));
+      return { agent: publicAgent(updated!) };
+    });
+
+    r.post('/agent/devices/test', async (req) => {
+      const tokens = await deviceTokens([req.agent!.id]);
+      await sendPush(tokens, { title: 'LiveAssist', body: 'Notifications are working on this phone.', data: { kind: 'test' } });
+      return { ok: true, devices: tokens.length };
     });
 
     r.delete('/agent/devices', async (req, reply) => {

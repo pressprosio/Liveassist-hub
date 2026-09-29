@@ -97,8 +97,8 @@ The secret is shown only once. If you lose it, run site:rotate-secret.
       const email = need(a, 'email', '--email you@presspros.io');
       const name = need(a, 'name', '--name "Stacy"');
       const password = typeof a.password === 'string' ? a.password : randomPassword();
-      await createAgent(email, name, password, a.admin ? 'admin' : 'agent');
-      console.log(`\nTeam member created.\n\n  Sign in at: ${config().publicUrl}/console/\n  Email:      ${email}\n  Password:   ${a.password ? '(the one you chose)' : password}\n`);
+      await createAgent(email, name, password, a.admin ? 'admin' : 'agent', !a.password);
+      console.log(`\nTeam member created.\n\n  Sign in at: ${config().publicUrl}/console/ or in the LiveAssist app\n  Email:      ${email}\n  Password:   ${a.password ? '(the one you chose)' : `${password}  (temporary: they choose their own at first sign-in)`}\n`);
       break;
     }
     case 'agent:list': {
@@ -115,8 +115,8 @@ The secret is shown only once. If you lose it, run site:rotate-secret.
       }
       const generated = !password;
       if (generated) password = randomPassword();
-      if (!(await resetPassword(email, password))) throw new Error(`No team member with email ${email}.`);
-      console.log(`Password updated${generated ? `: ${password}` : ''}. They have been signed out everywhere.`);
+      if (!(await resetPassword(email, password, generated))) throw new Error(`No team member with email ${email}.`);
+      console.log(`Password updated${generated ? `: ${password}  (temporary: they choose their own at next sign-in)` : ''}. They have been signed out everywhere.`);
       break;
     }
     case 'agent:remove': {

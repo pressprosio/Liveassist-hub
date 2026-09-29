@@ -32,6 +32,7 @@ function load() {
     encryptionKey: Buffer.from(encKey, 'hex'),
     jwtSecret,
     anthropicKey: opt('ANTHROPIC_API_KEY', ''),
+    anthropicWorkspaceId: opt('ANTHROPIC_WORKSPACE_ID', ''),
     aiMock: opt('AI_MOCK', '0') === '1',
     models: {
       economy: opt('MODEL_ECONOMY', 'claude-haiku-4-5-20251001'),

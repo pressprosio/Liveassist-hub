@@ -11,7 +11,7 @@ import {
 } from './conversations.js';
 import { search } from './knowledge.js';
 import { getSite, humansAllowed, withinHours, assistantName, type Site } from './sites.js';
-import { hasAnyDevice, onlineAgentIds, deviceTokens, type Agent } from './agents.js';
+import { alertRecipients, appForegroundAgentIds, hasAnyDevice, onlineAgentIds, deviceTokens, type Agent } from './agents.js';
 import { sendPush } from './push.js';
 import { enqueueWebhook } from './webhooks.js';
 import { overLimit } from './redis.js';
@@ -58,6 +58,37 @@ export async function teamAvailable(site: Site): Promise<boolean> {
   return hasAnyDevice();
 }
 
+/* ---------- Alerts: sound + banner for the team ---------- */
+
+type AlertKind = 'handoff' | 'new_chat' | 'message';
+
+/**
+ * Alerts everyone whose settings ask for this kind of event.
+ * - People with the phone app open get an in-app alert (the app plays the sound).
+ * - Everyone else gets a push notification on their phones.
+ * - The web console also receives the in-app alert and beeps.
+ */
+export async function alertTeam(kind: AlertKind, conv: Conversation, detail: string): Promise<void> {
+  const recipients = await alertRecipients(kind, conv.agent_id);
+  if (!recipients.length) return;
+  const site = await getSite(conv.site_id);
+  const siteName = site?.name || 'Chat';
+  const who = conv.name || 'Visitor';
+  const title =
+    kind === 'handoff' ? `${siteName}: a visitor wants a person`
+      : kind === 'new_chat' ? `New chat · ${siteName}`
+        : `${who} · ${siteName}`;
+  const body = kind === 'message' ? detail : kind === 'new_chat' ? `${who}: ${detail}` : detail || `${who} is waiting.`;
+
+  publish(AGENTS, { type: 'alert', kind, conversation_id: conv.id, title, body, to: recipients });
+
+  const onScreen = await appForegroundAgentIds();
+  const pushTo = recipients.filter((id) => !onScreen.has(id));
+  if (pushTo.length) {
+    sendPush(await deviceTokens(pushTo), { title, body, data: { conversation_id: conv.id, kind } }).catch(() => {});
+  }
+}
+
 /* ---------- Visitor messages ---------- */
 
 export async function handleVisitorMessage(conv: Conversation, text: string, clientId: string, origin: string) {
@@ -65,19 +96,11 @@ export async function handleVisitorMessage(conv: Conversation, text: string, cli
   if (duplicate) return message;
   broadcast(conv, message, origin);
 
-  if (conv.state === 'ai_active') {
-    queueAiTurn(conv.id);
-  } else if (conv.state === 'human_active' && conv.agent_id) {
-    const online = await onlineAgentIds();
-    if (!online.has(conv.agent_id)) {
-      const site = await getSite(conv.site_id);
-      sendPush(await deviceTokens([conv.agent_id]), {
-        title: `${conv.name || 'Visitor'} · ${site?.name || ''}`,
-        body: text,
-        data: { conversation_id: conv.id, kind: 'message' },
-      }).catch(() => {});
-    }
-  }
+  const count = await query<{ n: string }>("SELECT count(*)::text AS n FROM messages WHERE conversation_id = $1 AND role = 'visitor'", [conv.id]);
+  const first = Number(count[0]?.n || 0) === 1;
+  alertTeam(first ? 'new_chat' : 'message', conv, text).catch((e) => log.warn('alert failed', { error: errMsg(e) }));
+
+  if (conv.state === 'ai_active') queueAiTurn(conv.id);
   return message;
 }
 
@@ -235,13 +258,8 @@ export async function startHandoff(conv: Conversation, reason: string): Promise<
   const updated = await one_state(conv.id, ['ai_active'], { state: 'waiting_human', waiting_since: new Date() });
   if (!updated) return false;
   sendState(updated);
-  const site = await getSite(conv.site_id);
   publish(AGENTS, { type: 'handoff.requested', conversation_id: conv.id, reason });
-  sendPush(await deviceTokens(), {
-    title: `${site?.name || 'Chat'}: a visitor wants a person`,
-    body: reason || updated.name || 'Tap to join the chat.',
-    data: { conversation_id: conv.id, kind: 'handoff' },
-  }).catch(() => {});
+  alertTeam('handoff', updated, reason).catch((e) => log.warn('alert failed', { error: errMsg(e) }));
   return true;
 }
 

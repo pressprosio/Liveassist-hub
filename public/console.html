@@ -86,6 +86,12 @@
   .hint { font-size: 12.5px; color: var(--muted); padding: 0 16px 10px; background: var(--surface); }
   .placeholder { margin: auto; color: var(--muted); text-align: center; max-width: 36ch; }
 
+  dialog { border: 1px solid var(--line); border-radius: 14px; padding: 28px; width: min(400px, 92vw); }
+  dialog::backdrop { background: rgba(15, 20, 28, .45); }
+  dialog h2 { margin: 0 0 6px; font-size: 19px; }
+  dialog p.lead { margin: 0 0 18px; color: var(--muted); font-size: 14px; }
+  .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
   @media (max-width: 800px) {
     .app { grid-template-columns: 1fr; }
     .app.has-open .list { display: none; }
@@ -113,6 +119,7 @@
     <span class="spacer"></span>
     <button class="btn btn--ghost" id="alerts" type="button">Turn on alerts</button>
     <span id="me"></span>
+    <button class="btn btn--ghost" id="pw-open" type="button">Change password</button>
     <button class="btn btn--ghost" id="logout" type="button">Sign out</button>
   </header>
 
@@ -152,6 +159,21 @@
     </div>
   </main>
 </div>
+
+<dialog id="pw">
+  <form id="pw-form" method="dialog">
+    <h2>Change password</h2>
+    <p class="lead" id="pw-lead">Your other devices will be signed out.</p>
+    <div class="field"><label for="pw-current">Current password</label><input id="pw-current" type="password" autocomplete="current-password" required></div>
+    <div class="field"><label for="pw-new">New password</label><input id="pw-new" type="password" autocomplete="new-password" minlength="10" required></div>
+    <div class="field"><label for="pw-confirm">Confirm new password</label><input id="pw-confirm" type="password" autocomplete="new-password" required></div>
+    <p class="error" id="pw-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button class="btn btn--ghost" id="pw-cancel" type="button">Cancel</button>
+      <button class="btn" type="submit">Save password</button>
+    </div>
+  </form>
+</dialog>
 
 <script>
 (function () {
@@ -218,6 +240,7 @@
         attempts = 0; me = m.agent;
         $('conn').classList.add('is-on'); $('conn').textContent = 'Online';
         $('me').textContent = me.name;
+        if (me.must_change_password) openPassword(true);
         convs = {}; m.conversations.forEach(function (c) { convs[c.id] = c; });
         renderList();
         if (openId) send({ type: 'open', conversation_id: openId });
@@ -227,8 +250,8 @@
       case 'conversation.updated':
         convs[m.conversation.id] = m.conversation; renderList();
         if (m.conversation.id === openId) renderHead(); break;
-      case 'handoff.requested':
-        alertAgent(m.conversation_id, m.reason); break;
+      case 'alert':
+        if (me && m.to && m.to.indexOf(me.id) !== -1) alertAgent(m); break;
       case 'conversation.detail':
         if (!m.conversation || m.conversation.id !== openId) return;
         convs[m.conversation.id] = m.conversation; renderHead();
@@ -382,6 +405,36 @@
     agentTyping = false; send({ type: 'typing', conversation_id: openId, state: false });
   }
 
+  /* ---------- Change password ---------- */
+  function openPassword(required) {
+    $('pw-form').reset(); $('pw-error').textContent = '';
+    $('pw-cancel').hidden = !!required;
+    $('pw').dataset.required = required ? '1' : '';
+    $('pw-lead').textContent = required
+      ? 'You signed in with a temporary password. Choose your own to continue.'
+      : 'Your other devices will be signed out.';
+    if (!$('pw').open) $('pw').showModal();
+    $('pw-current').focus();
+  }
+  $('pw-open').addEventListener('click', function () { openPassword(false); });
+  $('pw-cancel').addEventListener('click', function () { $('pw').close(); });
+  $('pw').addEventListener('cancel', function (e) { if ($('pw').dataset.required) e.preventDefault(); });
+  $('pw-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var err = $('pw-error'); err.textContent = '';
+    if ($('pw-new').value.length < 10) { err.textContent = 'Use at least 10 characters.'; return; }
+    if ($('pw-new').value !== $('pw-confirm').value) { err.textContent = 'The new passwords don\'t match.'; return; }
+    fetch('/agent/password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify({ current_password: $('pw-current').value, new_password: $('pw-new').value }) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error(res.d.error || 'Password not changed.');
+        token = res.d.token; localStorage.setItem('laic_agent_token', token);
+        me = res.d.agent; $('pw').close();
+      })
+      .catch(function (x) { err.textContent = x.message; });
+  });
+
   /* ---------- Alerts ---------- */
   function updateAlertsButton() {
     var b = $('alerts');
@@ -396,12 +449,12 @@
       o.frequency.value = 880; g.gain.value = 0.08; o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.18);
     } catch (e) { /* audio blocked until the page is clicked */ }
   }
-  function alertAgent(id, reason) {
-    beep();
-    var c = convs[id];
+  function alertAgent(a) {
+    var viewing = a.conversation_id === openId && !document.hidden;
+    if (!viewing || a.kind === 'handoff') beep();
     if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-      var n = new Notification('A visitor wants a person', { body: (c && c.site_name ? c.site_name + ': ' : '') + (reason || ''), tag: id });
-      n.onclick = function () { window.focus(); openConv(id); n.close(); };
+      var n = new Notification(a.title, { body: a.body || '', tag: a.conversation_id });
+      n.onclick = function () { window.focus(); openConv(a.conversation_id); n.close(); };
     }
   }
 

@@ -17,7 +17,14 @@ let client: Anthropic | null = null;
 function anthropic(): Anthropic {
   if (!client) {
     if (!config().anthropicKey) throw new Error('ANTHROPIC_API_KEY is not set.');
-    client = new Anthropic({ apiKey: config().anthropicKey, maxRetries: 2, timeout: 60_000 });
+    const workspace = config().anthropicWorkspaceId;
+    client = new Anthropic({
+      apiKey: config().anthropicKey,
+      maxRetries: 2,
+      timeout: 60_000,
+      // Needed only for API keys that aren't scoped to a single workspace.
+      defaultHeaders: workspace ? { 'anthropic-workspace-id': workspace } : undefined,
+    });
   }
   return client;
 }

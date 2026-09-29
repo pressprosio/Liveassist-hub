@@ -2,7 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import { AGENTS, convChannel, publish, subscribe } from '../bus.js';
-import { authenticate, markOffline, markOnline, publicAgent, type Agent } from '../agents.js';
+import { authenticate, markOffline, markOnline, publicAgent, type Agent, type ClientKind } from '../agents.js';
 import { getConversation, listMessages, summaries, summary, toWire } from '../conversations.js';
 import { agentReturnToAi, agentSend, agentTakeOver, closeConversation, suggestReply } from '../engine.js';
 import { log, errMsg } from '../log.js';
@@ -12,6 +12,7 @@ export function agentSocket(socket: WebSocket) {
   let agent: Agent | null = null;
   let unsubscribe: (() => void) | null = null;
   let presence: NodeJS.Timeout | null = null;
+  let client: ClientKind = 'console';
 
   const send = (o: Record<string, unknown>) => {
     if (socket.readyState === 1) socket.send(JSON.stringify(o));
@@ -30,8 +31,9 @@ export function agentSocket(socket: WebSocket) {
       agent = await authenticate(String(msg.token || ''));
       if (!agent) return socket.close(4001, 'invalid token');
       clearTimeout(authTimer);
-      await markOnline(agent.id, connId);
-      presence = setInterval(() => markOnline(agent!.id, connId).catch(() => {}), 30_000);
+      client = msg.client === 'app' ? 'app' : 'console';
+      await markOnline(agent.id, connId, client);
+      presence = setInterval(() => markOnline(agent!.id, connId, client).catch(() => {}), 30_000);
       unsubscribe = subscribe(AGENTS, (evt) => {
         const { _origin, ...rest } = evt;
         send(rest);
@@ -90,7 +92,7 @@ export function agentSocket(socket: WebSocket) {
         return send({ type: 'suggestion', conversation_id: c.id, text });
       }
       case 'ping':
-        await markOnline(agent.id, connId);
+        await markOnline(agent.id, connId, client);
         return send({ type: 'pong' });
     }
   }
@@ -114,6 +116,6 @@ export function agentSocket(socket: WebSocket) {
     clearTimeout(authTimer);
     if (presence) clearInterval(presence);
     unsubscribe?.();
-    if (agent) markOffline(agent.id, connId).catch(() => {});
+    if (agent) markOffline(agent.id, connId, client).catch(() => {});
   });
 }
